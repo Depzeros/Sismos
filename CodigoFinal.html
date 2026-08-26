@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitoreo y Alerta Sonora de Sismos - Bogotá</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background-color: #f4f6f9;
+        }
+
+        header {
+            background-color: #1a252f;
+            color: #ffffff;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        header h1 {
+            font-size: 1.2rem;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 8px 14px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.85rem;
+            transition: background 0.2s;
+        }
+
+        .btn-audio {
+            background-color: #f39c12;
+            color: #1a252f;
+        }
+
+        .btn-test {
+            background-color: #e67e22;
+            color: white;
+        }
+
+        .btn-stop {
+            background-color: #c0392b;
+            color: white;
+            display: none;
+        }
+
+        #alert-banner {
+            display: none;
+            background-color: #e74c3c;
+            color: white;
+            padding: 12px 20px;
+            font-weight: bold;
+            text-align: center;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { background-color: #e74c3c; }
+            50% { background-color: #900c3f; }
+            100% { background-color: #e74c3c; }
+        }
+
+        #main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        #map {
+            flex: 2;
+            height: 100%;
+        }
+
+        #sidebar {
+            flex: 1;
+            max-width: 380px;
+            background-color: #ffffff;
+            border-left: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 15px;
+            background-color: #ecf0f1;
+            border-bottom: 1px solid #ddd;
+            font-size: 0.9rem;
+            color: #333;
+        }
+
+        #earthquake-list {
+            flex: 1;
+            overflow-y: auto;
+            list-style: none;
+        }
+
+        .quake-item {
+            padding: 12px 15px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .quake-item:hover {
+            background-color: #f8f9fa;
+        }
+
+        .quake-mag {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            color: white;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        .mag-low { background-color: #27ae60; }
+        .mag-mid { background-color: #f39c12; }
+        .mag-high { background-color: #e74c3c; }
+
+        .quake-title {
+            font-size: 0.9rem;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        .quake-time {
+            font-size: 0.75rem;
+            color: #7f8c8d;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>⚡ Monitor de Sismos Cerca a Bogotá</h1>
+        <div class="header-controls">
+            <span id="status">Cargando...</span>
+            <button id="btn-enable" class="btn btn-audio" onclick="enableAudio()">🔊 Activar Audio</button>
+            <button class="btn btn-test" onclick="testAlarm()">🔔 Probar Alarma</button>
+            <button id="btn-stop" class="btn btn-stop" onclick="stopAlarm()">🔇 Silenciar</button>
+        </div>
+    </header>
+
+    <div id="alert-banner">
+        🚨 ¡ALERTA SÍSMICA REGISTRADA RECIENTEMENTE CERCA A BOGOTÁ!
+    </div>
+
+    <div id="main-container">
+        <div id="map"></div>
+        <div id="sidebar">
+            <div class="sidebar-header">
+                <strong>Sismos recientes (Radio 500 km)</strong>
+            </div>
+            <ul id="earthquake-list"></ul>
+        </div>
+    </div>
+
+    <script>
+        const BOGOTA_LOCATION = { lat: 4.6097, lng: -74.0817 };
+        let map;
+        let audioCtx = null;
+        let alarmInterval = null;
+        let audioEnabled = false;
+
+        function enableAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            audioEnabled = true;
+            
+            const btn = document.getElementById("btn-enable");
+            btn.style.backgroundColor = "#27ae60";
+            btn.style.color = "#ffffff";
+            btn.innerText = "✅ Audio Listo";
+        }
+
+        // Emitir un ciclo de tono de sirena
+        function playSirenCycle() {
+            if (!audioCtx) return;
+
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = 'sawtooth';
+            gain.gain.value = 0.25;
+
+            const now = audioCtx.currentTime;
+            osc.frequency.setValueAtTime(750, now);
+            osc.frequency.exponentialRampToValueAtTime(350, now + 0.4);
+            osc.frequency.exponentialRampToValueAtTime(750, now + 0.8);
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.8);
+        }
+
+        // Iniciar alarma continua
+        function startAlarmLoop() {
+            enableAudio();
+            if (alarmInterval) clearInterval(alarmInterval);
+
+            playSirenCycle();
+            alarmInterval = setInterval(playSirenCycle, 850);
+            document.getElementById("btn-stop").style.display = "inline-block";
+        }
+
+        // Detener alarma
+        function stopAlarm() {
+            if (alarmInterval) {
+                clearInterval(alarmInterval);
+                alarmInterval = null;
+            }
+            document.getElementById("alert-banner").style.display = "none";
+            document.getElementById("btn-stop").style.display = "none";
+        }
+
+        // Botón manual de prueba
+        function testAlarm() {
+            document.getElementById("alert-banner").style.display = "block";
+            document.getElementById("alert-banner").innerText = "🔔 PRUEBA DE ALARMA SONORA ACTIVADA";
+            startAlarmLoop();
+        }
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById("map"), {
+                zoom: 6,
+                center: BOGOTA_LOCATION,
+                styles: [
+                    { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] }
+                ]
+            });
+
+            new google.maps.Marker({
+                position: BOGOTA_LOCATION,
+                map: map,
+                title: "Bogotá, Colombia",
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 7,
+                    fillColor: "#2980b9",
+                    fillOpacity: 1,
+                    strokeWeight: 2,
+                    strokeColor: "#ffffff"
+                }
+            });
+
+            fetchEarthquakes();
+        }
+
+        async function fetchEarthquakes() {
+            const statusEl = document.getElementById("status");
+            const usgsUrl = `https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson` +
+                            `&latitude=${BOGOTA_LOCATION.lat}` +
+                            `&longitude=${BOGOTA_LOCATION.lng}` +
+                            `&maxradiuskm=500` +
+                            `&minmagnitude=2.0`;
+
+            try {
+                const response = await fetch(usgsUrl);
+                const data = await response.json();
+                statusEl.textContent = `${data.features.length} eventos (30 días)`;
+                processEarthquakes(data.features);
+            } catch (error) {
+                console.error("Error al obtener datos:", error);
+                statusEl.textContent = "Error al cargar";
+            }
+        }
+
+        function processEarthquakes(events) {
+            const listEl = document.getElementById("earthquake-list");
+            const alertBanner = document.getElementById("alert-banner");
+            listEl.innerHTML = "";
+
+            let alertTriggered = false;
+            const now = new Date().getTime();
+
+            events.forEach(event => {
+                const props = event.properties;
+                const coords = event.geometry.coordinates;
+                const position = { lat: coords[1], lng: coords[0] };
+                const magnitude = props.mag;
+                const eventTime = new Date(props.time);
+
+                // Evalúa sismos significativos (últimos 7 días con Magnitud >= 4.0)
+                const daysOld = (now - props.time) / (1000 * 60 * 60 * 24);
+                if (daysOld <= 7 && magnitude >= 4.0) {
+                    alertTriggered = true;
+                }
+
+                let magClass = "mag-low";
+                let pinColor = "#27ae60";
+                if (magnitude >= 4.0 && magnitude < 5.5) {
+                    magClass = "mag-mid";
+                    pinColor = "#f39c12";
+                } else if (magnitude >= 5.5) {
+                    magClass = "mag-high";
+                    pinColor = "#e74c3c";
+                }
+
+                const marker = new google.maps.Marker({
+                    position: position,
+                    map: map,
+                    title: props.title,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: Math.max(magnitude * 3, 5),
+                        fillColor: pinColor,
+                        fillOpacity: 0.7,
+                        strokeWeight: 1,
+                        strokeColor: "#ffffff"
+                    }
+                });
+
+                const infoWindow = new google.maps.InfoWindow({
+                    content: `
+                        <div style="color: #333;">
+                            <h4>${props.place}</h4>
+                            <p><strong>Magnitud:</strong> M ${magnitude}</p>
+                            <p><strong>Profundidad:</strong> ${coords[2]} km</p>
+                            <p><strong>Fecha:</strong> ${eventTime.toLocaleString('es-CO')}</p>
+                        </div>
+                    `
+                });
+
+                marker.addListener("click", () => {
+                    infoWindow.open(map, marker);
+                });
+
+                const listItem = document.createElement("li");
+                listItem.className = "quake-item";
+                listItem.innerHTML = `
+                    <div>
+                        <span class="quake-mag ${magClass}">M ${magnitude.toFixed(1)}</span>
+                        <span class="quake-title">${props.place}</span>
+                    </div>
+                    <div class="quake-time">${eventTime.toLocaleString('es-CO')} | Prof: ${coords[2]} km</div>
+                `;
+
+                listItem.addEventListener("click", () => {
+                    map.setCenter(position);
+                    map.setZoom(8);
+                    infoWindow.open(map, marker);
+                });
+
+                listEl.appendChild(listItem);
+            });
+
+            if (alertTriggered) {
+                alertBanner.innerText = "🚨 ¡ALERTA SÍSMICA! Sismo reciente significativo detectado cerca de Bogotá.";
+                alertBanner.style.display = "block";
+                startAlarmLoop();
+            }
+        }
+    </script>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBfJCEyIkOyUKwDqD7mmg3-7s9yD6ie8CI&callback=initMap" async defer></script>
+</body>
+</html>
